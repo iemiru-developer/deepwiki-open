@@ -79,7 +79,7 @@ COPY --from=ollama_base /usr/bin/ollama /usr/local/bin/
 COPY --from=ollama_base /root/.ollama /root/.ollama
 
 # Expose the port the app runs on
-EXPOSE ${PORT:-8001} 3000
+EXPOSE ${PORT:-8001} 30000
 
 # Create a script to run both backend and frontend
 RUN echo '#!/bin/bash\n\
@@ -100,7 +100,8 @@ fi\n\
 \n\
 # Start the API server in the background with the configured port\n\
 python -m api.main --port ${PORT:-8001} &\n\
-PORT=3000 HOSTNAME=0.0.0.0 node server.js &\n\
+# Start Next.js server with explicit port\n\
+NEXT_PORT=${NEXT_PORT:-30000} PORT=${NEXT_PORT:-30000} HOSTNAME=0.0.0.0 node server.js &\n\
 wait -n\n\
 exit $?' > /app/start.sh && chmod +x /app/start.sh
 
