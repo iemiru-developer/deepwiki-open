@@ -1,0 +1,484 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'DeepWiki ECS (Elastic Container Service) with Fargate'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: deepwiki
+    Description: Project name used for resource naming
+  
+  ImageTag:
+    Type: String
+    Default: placeholder
+    Description: Docker image tag to deploy (use 'placeholder' for initial deployment)
+  
+  DesiredCount:
+    Type: Number
+    Default: 1
+    MinValue: 0
+    MaxValue: 10
+    Description: Desired number of ECS tasks
+  
+  TaskCpu:
+    Type: String
+    Default: '2048'
+    AllowedValues: ['256', '512', '1024', '2048', '4096']
+    Description: CPU units for the task (1 vCPU = 1024 units)
+  
+  TaskMemory:
+    Type: String
+    Default: '4096'
+    AllowedValues: ['512', '1024', '2048', '3072', '4096', '5120', '6144', '7168', '8192']
+    Description: Memory for the task in MB
+  
+  OpenAIAPIKey:
+    Type: String
+    NoEcho: true
+    Description: OpenAI API Key (required)
+    MinLength: 1
+  
+  GoogleAPIKey:
+    Type: String
+    NoEcho: true
+    Description: Google API Key for Gemini models
+    Default: ''
+  
+  OpenRouterAPIKey:
+    Type: String
+    NoEcho: true
+    Description: OpenRouter API Key (optional)
+    Default: ''
+  
+  AzureOpenAIAPIKey:
+    Type: String
+    NoEcho: true
+    Description: Azure OpenAI API Key (optional)
+    Default: ''
+  
+  AzureOpenAIEndpoint:
+    Type: String
+    Description: Azure OpenAI Endpoint (optional)
+    Default: ''
+  
+  AzureOpenAIVersion:
+    Type: String
+    Description: Azure OpenAI API Version (optional)
+    Default: ''
+  
+  LogLevel:
+    Type: String
+    Default: INFO
+    AllowedValues: ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']
+    Description: Application log level
+  
+  EnableAutoScaling:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Enable auto scaling (disable for initial deployment)
+  
+  AllowedCIDR:
+    Type: String
+    Default: '0.0.0.0/0'
+    Description: CIDR block allowed to access the application (use your office IP range for security)
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+  
+  CreateECSService:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Create ECS Service (set to false when recreating service manually)
+
+Resources:
+  # Security Group for Public ECS Access
+  PublicECSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub '${ProjectName}-public-ecs-sg'
+      GroupDescription: Security group for public ECS access
+      VpcId:
+        Fn::ImportValue: !Sub '${ProjectName}-VPC'
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8001
+          ToPort: 8001
+          CidrIp: !Ref AllowedCIDR
+          Description: API port access
+        - IpProtocol: tcp
+          FromPort: 30000
+          ToPort: 30000
+          CidrIp: !Ref AllowedCIDR
+          Description: Frontend port access
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: All outbound traffic
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-public-ecs-sg'
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ECR Repository
+  ECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub '${ProjectName}'
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Delete untagged images older than 1 day",
+                "selection": {
+                  "tagStatus": "untagged",
+                  "countType": "sinceImagePushed",
+                  "countUnit": "days",
+                  "countNumber": 1
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-ecr'
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ECS Cluster
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub '${ProjectName}-cluster'
+      CapacityProviders:
+        - FARGATE
+        - FARGATE_SPOT
+      DefaultCapacityProviderStrategy:
+        - CapacityProvider: FARGATE
+          Weight: 1
+        - CapacityProvider: FARGATE_SPOT
+          Weight: 4
+      ClusterSettings:
+        - Name: containerInsights
+          Value: enabled
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-cluster'
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # CloudWatch Log Group
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/ecs/${ProjectName}'
+      RetentionInDays: 30
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-logs'
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ECS Task Execution Role
+  TaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-task-execution-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: SecretsManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Sub 'arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ProjectName}/*'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-task-execution-role'
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ECS Task Role
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-task-role'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: EFSAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - elasticfilesystem:ClientMount
+                  - elasticfilesystem:ClientWrite
+                  - elasticfilesystem:ClientRootAccess
+                Resource: 
+                  Fn::ImportValue: !Sub '${ProjectName}-EFSFileSystemArn'
+        - PolicyName: CloudWatchLogs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/ecs/${ProjectName}*'
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-task-role'
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # Secrets for API Keys
+  OpenAISecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub '${ProjectName}/openai-api-key'
+      Description: OpenAI API Key for DeepWiki
+      SecretString: !Ref OpenAIAPIKey
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-openai-secret'
+        - Key: Project
+          Value: !Ref ProjectName
+
+  GoogleSecret:
+    Type: AWS::SecretsManager::Secret
+    Condition: HasGoogleAPIKey
+    Properties:
+      Name: !Sub '${ProjectName}/google-api-key'
+      Description: Google API Key for DeepWiki
+      SecretString: !Ref GoogleAPIKey
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-google-secret'
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ECS Task Definition
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub '${ProjectName}-task'
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: !Ref TaskCpu
+      Memory: !Ref TaskMemory
+      ExecutionRoleArn: !Ref TaskExecutionRole
+      TaskRoleArn: !Ref TaskRole
+      ContainerDefinitions:
+        - Name: !Sub '${ProjectName}-app'
+          Image: !If
+            - IsPlaceholderImage
+            - nginx:alpine
+            - !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${ECRRepository}:${ImageTag}'
+          Essential: true
+          PortMappings: !If
+            - IsPlaceholderImage
+            - - ContainerPort: 80
+                Protocol: tcp
+                Name: api
+            - - ContainerPort: 8001
+                Protocol: tcp
+                Name: api
+              - ContainerPort: 30000
+                Protocol: tcp
+                Name: frontend
+          Environment: !If
+            - IsPlaceholderImage
+            - []
+            - - Name: PORT
+                Value: '8001'
+              - Name: NEXT_PORT
+                Value: '30000'
+              - Name: NODE_ENV
+                Value: production
+              - Name: SERVER_BASE_URL
+                Value: http://localhost:8001
+              - Name: LOG_LEVEL
+                Value: !Ref LogLevel
+              - Name: LOG_FILE_PATH
+                Value: api/logs/application.log
+          Secrets: !If
+            - IsPlaceholderImage
+            - !Ref 'AWS::NoValue'
+            - !If
+              - HasGoogleAPIKey
+              - - Name: OPENAI_API_KEY
+                  ValueFrom: !Ref OpenAISecret
+                - Name: GOOGLE_API_KEY
+                  ValueFrom: !Ref GoogleSecret
+              - - Name: OPENAI_API_KEY
+                  ValueFrom: !Ref OpenAISecret
+          MountPoints: !If
+            - IsPlaceholderImage
+            - !Ref 'AWS::NoValue'
+            - - SourceVolume: efs-main
+                ContainerPath: /root/.adalflow
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref 'AWS::Region'
+              awslogs-stream-prefix: ecs
+      Volumes:
+        - Name: efs-main
+          EFSVolumeConfiguration:
+            FileSystemId:
+              Fn::ImportValue: !Sub '${ProjectName}-EFSFileSystemId'
+            TransitEncryption: ENABLED
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-task-definition'
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # ECS Service (条件付きで作成)
+  ECSService:
+    Type: AWS::ECS::Service
+    Condition: CreateECSService
+    Properties:
+      ServiceName: !Sub '${ProjectName}-service'
+      Cluster: !Ref ECSCluster
+      TaskDefinition: !Ref TaskDefinition
+      DesiredCount: !Ref DesiredCount
+      LaunchType: FARGATE
+      PlatformVersion: LATEST
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          SecurityGroups:
+            - !Ref PublicECSSecurityGroup
+            - Fn::ImportValue: !Sub '${ProjectName}-EFSSecurityGroup'
+          Subnets:
+            - Fn::ImportValue: !Sub '${ProjectName}-PublicSubnet1'
+            - Fn::ImportValue: !Sub '${ProjectName}-PublicSubnet2'
+          AssignPublicIp: ENABLED
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 50
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-service'
+        - Key: Project
+          Value: !Ref ProjectName
+      EnableExecuteCommand: true
+
+  # Auto Scaling Target
+  AutoScalingTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Condition: AutoScalingEnabled
+    DependsOn: ECSService
+    Properties:
+      ServiceNamespace: ecs
+      ResourceId: !Sub 'service/${ECSCluster}/${ProjectName}-service'
+      ScalableDimension: ecs:service:DesiredCount
+      MinCapacity: 1
+      MaxCapacity: 10
+      RoleARN: !Sub 'arn:aws:iam::${AWS::AccountId}:role/aws-service-role/ecs.application-autoscaling.amazonaws.com/AWSServiceRoleForApplicationAutoScaling_ECSService'
+
+  # Auto Scaling Policy - CPU
+  AutoScalingPolicyCPU:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Condition: AutoScalingEnabled
+    DependsOn: AutoScalingTarget
+    Properties:
+      PolicyName: !Sub '${ProjectName}-cpu-scaling'
+      PolicyType: TargetTrackingScaling
+      ServiceNamespace: ecs
+      ResourceId: !Sub 'service/${ECSCluster}/${ProjectName}-service'
+      ScalableDimension: ecs:service:DesiredCount
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 70.0
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageCPUUtilization
+        ScaleOutCooldown: 300
+        ScaleInCooldown: 300
+
+  # Auto Scaling Policy - Memory
+  AutoScalingPolicyMemory:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Condition: AutoScalingEnabled
+    DependsOn: AutoScalingTarget
+    Properties:
+      PolicyName: !Sub '${ProjectName}-memory-scaling'
+      PolicyType: TargetTrackingScaling
+      ServiceNamespace: ecs
+      ResourceId: !Sub 'service/${ECSCluster}/${ProjectName}-service'
+      ScalableDimension: ecs:service:DesiredCount
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 80.0
+        PredefinedMetricSpecification:
+          PredefinedMetricType: ECSServiceAverageMemoryUtilization
+        ScaleOutCooldown: 300
+        ScaleInCooldown: 300
+
+Conditions:
+  HasGoogleAPIKey: !Not [!Equals [!Ref GoogleAPIKey, '']]
+  IsPlaceholderImage: !Equals [!Ref ImageTag, 'placeholder']
+  AutoScalingEnabled: !Equals [!Ref EnableAutoScaling, 'true']
+  CreateECSService: !Equals [!Ref CreateECSService, 'true']
+
+Outputs:
+  ECRRepositoryURI:
+    Description: ECR Repository URI
+    Value: !GetAtt ECRRepository.RepositoryUri
+    Export:
+      Name: !Sub '${ProjectName}-ECRRepositoryURI'
+
+  ECSClusterName:
+    Description: ECS Cluster Name
+    Value: !Ref ECSCluster
+    Export:
+      Name: !Sub '${ProjectName}-ECSClusterName'
+
+  ECSServiceName:
+    Description: ECS Service Name
+    Condition: CreateECSService
+    Value: !GetAtt ECSService.Name
+    Export:
+      Name: !Sub '${ProjectName}-ECSServiceName'
+
+  TaskDefinitionArn:
+    Description: Task Definition ARN
+    Value: !Ref TaskDefinition
+    Export:
+      Name: !Sub '${ProjectName}-TaskDefinitionArn'
+
+  LogGroupName:
+    Description: CloudWatch Log Group Name
+    Value: !Ref LogGroup
+    Export:
+      Name: !Sub '${ProjectName}-LogGroupName'
+
+  PublicECSSecurityGroupId:
+    Description: Public ECS Security Group ID
+    Value: !Ref PublicECSSecurityGroup
+    Export:
+      Name: !Sub '${ProjectName}-PublicECSSecurityGroupId'

@@ -1,0 +1,431 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'DeepWiki VPC and Network Infrastructure'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: deepwiki
+    Description: Project name used for resource naming
+  
+  VpcCidr:
+    Type: String
+    Default: 10.0.0.0/16
+    Description: CIDR block for VPC
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+  
+  PublicSubnet1Cidr:
+    Type: String
+    Default: 10.0.1.0/24
+    Description: CIDR block for public subnet 1
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+  
+  PublicSubnet2Cidr:
+    Type: String
+    Default: 10.0.2.0/24
+    Description: CIDR block for public subnet 2
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+  
+  PrivateSubnet1Cidr:
+    Type: String
+    Default: 10.0.3.0/24
+    Description: CIDR block for private subnet 1
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+  
+  PrivateSubnet2Cidr:
+    Type: String
+    Default: 10.0.4.0/24
+    Description: CIDR block for private subnet 2
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+
+Mappings:
+  AZRegions:
+    ap-northeast-1:
+      AZ1: ap-northeast-1a
+      AZ2: ap-northeast-1c
+    us-east-1:
+      AZ1: us-east-1a
+      AZ2: us-east-1b
+    us-west-2:
+      AZ1: us-west-2a
+      AZ2: us-west-2b
+    eu-west-1:
+      AZ1: eu-west-1a
+      AZ2: eu-west-1b
+
+Resources:
+  # VPC
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-vpc'
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # Internet Gateway
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-igw'
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # Attach Internet Gateway to VPC
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+
+  # Public Subnet 1
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !FindInMap [AZRegions, !Ref 'AWS::Region', AZ1]
+      CidrBlock: !Ref PublicSubnet1Cidr
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-public-subnet-1'
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Type
+          Value: Public
+
+  # Public Subnet 2
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !FindInMap [AZRegions, !Ref 'AWS::Region', AZ2]
+      CidrBlock: !Ref PublicSubnet2Cidr
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-public-subnet-2'
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Type
+          Value: Public
+
+  # Private Subnet 1
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !FindInMap [AZRegions, !Ref 'AWS::Region', AZ1]
+      CidrBlock: !Ref PrivateSubnet1Cidr
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-private-subnet-1'
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Type
+          Value: Private
+
+  # Private Subnet 2
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      AvailabilityZone: !FindInMap [AZRegions, !Ref 'AWS::Region', AZ2]
+      CidrBlock: !Ref PrivateSubnet2Cidr
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-private-subnet-2'
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Type
+          Value: Private
+
+  # NAT Gateway 1 Elastic IP
+  NatGateway1EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-nat-gateway-1-eip'
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # NAT Gateway 2 Elastic IP
+  NatGateway2EIP:
+    Type: AWS::EC2::EIP
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-nat-gateway-2-eip'
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # NAT Gateway 1
+  NatGateway1:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGateway1EIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-nat-gateway-1'
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # NAT Gateway 2
+  NatGateway2:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NatGateway2EIP.AllocationId
+      SubnetId: !Ref PublicSubnet2
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-nat-gateway-2'
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # Public Route Table
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-public-routes'
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # Default Public Route
+  DefaultPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  # Public Subnet 1 Route Table Association
+  PublicSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet1
+
+  # Public Subnet 2 Route Table Association
+  PublicSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet2
+
+  # Private Route Table 1
+  PrivateRouteTable1:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-private-routes-1'
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # Default Private Route 1
+  DefaultPrivateRoute1:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway1
+
+  # Private Subnet 1 Route Table Association
+  PrivateSubnet1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable1
+      SubnetId: !Ref PrivateSubnet1
+
+  # Private Route Table 2
+  PrivateRouteTable2:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-private-routes-2'
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # Default Private Route 2
+  DefaultPrivateRoute2:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway2
+
+  # Private Subnet 2 Route Table Association
+  PrivateSubnet2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable2
+      SubnetId: !Ref PrivateSubnet2
+
+  # Security Group for ECS Tasks
+  ECSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub '${ProjectName}-ecs-sg'
+      GroupDescription: Security group for ECS tasks
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8001
+          ToPort: 8001
+          CidrIp: 0.0.0.0/0
+          Description: API port for direct access
+        - IpProtocol: tcp
+          FromPort: 30000
+          ToPort: 30000
+          CidrIp: 0.0.0.0/0
+          Description: Frontend port for direct access
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: All outbound traffic
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-ecs-sg'
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # Security Group for ALB
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub '${ProjectName}-alb-sg'
+      GroupDescription: Security group for Application Load Balancer
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: HTTP access from internet
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS access from internet
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: All outbound traffic
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-alb-sg'
+        - Key: Project
+          Value: !Ref ProjectName
+
+  # Security Group for EFS
+  EFSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub '${ProjectName}-efs-sg'
+      GroupDescription: Security group for EFS
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          SourceSecurityGroupId: !Ref ECSSecurityGroup
+          Description: NFS access from ECS tasks (existing)
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          CidrIp: 10.0.0.0/16
+          Description: NFS access from VPC
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: All outbound traffic
+      Tags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-efs-sg'
+        - Key: Project
+          Value: !Ref ProjectName
+
+Outputs:
+  VPC:
+    Description: A reference to the created VPC
+    Value: !Ref VPC
+    Export:
+      Name: !Sub '${ProjectName}-VPC'
+
+  PublicSubnets:
+    Description: A list of the public subnets
+    Value: !Join [",", [!Ref PublicSubnet1, !Ref PublicSubnet2]]
+    Export:
+      Name: !Sub '${ProjectName}-PublicSubnets'
+
+  PrivateSubnets:
+    Description: A list of the private subnets
+    Value: !Join [",", [!Ref PrivateSubnet1, !Ref PrivateSubnet2]]
+    Export:
+      Name: !Sub '${ProjectName}-PrivateSubnets'
+
+  PublicSubnet1:
+    Description: A reference to the public subnet in the 1st Availability Zone
+    Value: !Ref PublicSubnet1
+    Export:
+      Name: !Sub '${ProjectName}-PublicSubnet1'
+
+  PublicSubnet2:
+    Description: A reference to the public subnet in the 2nd Availability Zone
+    Value: !Ref PublicSubnet2
+    Export:
+      Name: !Sub '${ProjectName}-PublicSubnet2'
+
+  PrivateSubnet1:
+    Description: A reference to the private subnet in the 1st Availability Zone
+    Value: !Ref PrivateSubnet1
+    Export:
+      Name: !Sub '${ProjectName}-PrivateSubnet1'
+
+  PrivateSubnet2:
+    Description: A reference to the private subnet in the 2nd Availability Zone
+    Value: !Ref PrivateSubnet2
+    Export:
+      Name: !Sub '${ProjectName}-PrivateSubnet2'
+
+  ECSSecurityGroup:
+    Description: Security group for ECS tasks
+    Value: !Ref ECSSecurityGroup
+    Export:
+      Name: !Sub '${ProjectName}-ECSSecurityGroup'
+
+  ALBSecurityGroup:
+    Description: Security group for ALB
+    Value: !Ref ALBSecurityGroup
+    Export:
+      Name: !Sub '${ProjectName}-ALBSecurityGroup'
+
+  EFSSecurityGroup:
+    Description: Security group for EFS
+    Value: !Ref EFSSecurityGroup
+    Export:
+      Name: !Sub '${ProjectName}-EFSSecurityGroup'
+
+  VpcCidr:
+    Description: VPC CIDR block
+    Value: !Ref VpcCidr
+    Export:
+      Name: !Sub '${ProjectName}-VpcCidr'
