@@ -1,0 +1,218 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'DeepWiki EFS (Elastic File System) for persistent data storage'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: deepwiki
+    Description: Project name used for resource naming
+  
+  PerformanceMode:
+    Type: String
+    Default: generalPurpose
+    AllowedValues:
+      - generalPurpose
+      - maxIO
+    Description: EFS performance mode
+  
+  ThroughputMode:
+    Type: String
+    Default: provisioned
+    AllowedValues:
+      - bursting
+      - provisioned
+    Description: EFS throughput mode
+  
+  ProvisionedThroughputInMibps:
+    Type: Number
+    Default: 100
+    MinValue: 1
+    MaxValue: 1024
+    Description: Provisioned throughput in MiB/s (only used when ThroughputMode is provisioned)
+
+Conditions:
+  IsProvisionedThroughput: !Equals [!Ref ThroughputMode, provisioned]
+
+Resources:
+  # EFS File System
+  EFSFileSystem:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      PerformanceMode: !Ref PerformanceMode
+      ThroughputMode: !Ref ThroughputMode
+      ProvisionedThroughputInMibps: !If
+        - IsProvisionedThroughput
+        - !Ref ProvisionedThroughputInMibps
+        - !Ref 'AWS::NoValue'
+      Encrypted: true
+      BackupPolicy:
+        Status: ENABLED
+      LifecyclePolicies:
+        - TransitionToIA: AFTER_30_DAYS
+        - TransitionToPrimaryStorageClass: AFTER_1_ACCESS
+      FileSystemTags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-efs'
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Purpose
+          Value: DeepWiki persistent data storage
+        - Key: Environment
+          Value: production
+
+  # EFS Mount Target in Private Subnet 1
+  EFSMountTarget1:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EFSFileSystem
+      SubnetId:
+        Fn::ImportValue: !Sub '${ProjectName}-PrivateSubnet1'
+      SecurityGroups:
+        - Fn::ImportValue: !Sub '${ProjectName}-EFSSecurityGroup'
+
+  # EFS Mount Target in Private Subnet 2
+  EFSMountTarget2:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref EFSFileSystem
+      SubnetId:
+        Fn::ImportValue: !Sub '${ProjectName}-PrivateSubnet2'
+      SecurityGroups:
+        - Fn::ImportValue: !Sub '${ProjectName}-EFSSecurityGroup'
+
+  # EFS Access Point for DeepWiki application
+  EFSAccessPoint:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref EFSFileSystem
+      PosixUser:
+        Uid: 1001
+        Gid: 1001
+      RootDirectory:
+        Path: '/deepwiki-data'
+        CreationInfo:
+          OwnerUid: 1001
+          OwnerGid: 1001
+          Permissions: 755
+      AccessPointTags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-efs-access-point'
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Purpose
+          Value: DeepWiki application data access
+
+  # EFS Access Point for repositories
+  EFSAccessPointRepos:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref EFSFileSystem
+      PosixUser:
+        Uid: 1001
+        Gid: 1001
+      RootDirectory:
+        Path: '/repos'
+        CreationInfo:
+          OwnerUid: 1001
+          OwnerGid: 1001
+          Permissions: 755
+      AccessPointTags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-efs-repos-access-point'
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Purpose
+          Value: Git repositories storage
+
+  # EFS Access Point for databases
+  EFSAccessPointDatabases:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref EFSFileSystem
+      PosixUser:
+        Uid: 1001
+        Gid: 1001
+      RootDirectory:
+        Path: '/databases'
+        CreationInfo:
+          OwnerUid: 1001
+          OwnerGid: 1001
+          Permissions: 755
+      AccessPointTags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-efs-databases-access-point'
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Purpose
+          Value: Vector databases and embeddings storage
+
+  # EFS Access Point for wiki cache
+  EFSAccessPointWikiCache:
+    Type: AWS::EFS::AccessPoint
+    Properties:
+      FileSystemId: !Ref EFSFileSystem
+      PosixUser:
+        Uid: 1001
+        Gid: 1001
+      RootDirectory:
+        Path: '/wikicache'
+        CreationInfo:
+          OwnerUid: 1001
+          OwnerGid: 1001
+          Permissions: 755
+      AccessPointTags:
+        - Key: Name
+          Value: !Sub '${ProjectName}-efs-wikicache-access-point'
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Purpose
+          Value: Generated wiki content cache
+
+Outputs:
+  EFSFileSystemId:
+    Description: EFS File System ID
+    Value: !Ref EFSFileSystem
+    Export:
+      Name: !Sub '${ProjectName}-EFSFileSystemId'
+
+  EFSFileSystemArn:
+    Description: EFS File System ARN
+    Value: !GetAtt EFSFileSystem.Arn
+    Export:
+      Name: !Sub '${ProjectName}-EFSFileSystemArn'
+
+  EFSAccessPointId:
+    Description: EFS Access Point ID for main application data
+    Value: !Ref EFSAccessPoint
+    Export:
+      Name: !Sub '${ProjectName}-EFSAccessPointId'
+
+  EFSAccessPointReposId:
+    Description: EFS Access Point ID for repositories
+    Value: !Ref EFSAccessPointRepos
+    Export:
+      Name: !Sub '${ProjectName}-EFSAccessPointReposId'
+
+  EFSAccessPointDatabasesId:
+    Description: EFS Access Point ID for databases
+    Value: !Ref EFSAccessPointDatabases
+    Export:
+      Name: !Sub '${ProjectName}-EFSAccessPointDatabasesId'
+
+  EFSAccessPointWikiCacheId:
+    Description: EFS Access Point ID for wiki cache
+    Value: !Ref EFSAccessPointWikiCache
+    Export:
+      Name: !Sub '${ProjectName}-EFSAccessPointWikiCacheId'
+
+  EFSMountTarget1:
+    Description: EFS Mount Target in AZ1
+    Value: !Ref EFSMountTarget1
+    Export:
+      Name: !Sub '${ProjectName}-EFSMountTarget1'
+
+  EFSMountTarget2:
+    Description: EFS Mount Target in AZ2
+    Value: !Ref EFSMountTarget2
+    Export:
+      Name: !Sub '${ProjectName}-EFSMountTarget2'
